@@ -95,10 +95,13 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq --no-install-recommends \
-            ffmpeg fonts-dejavu-core curl nodejs
+            ffmpeg fonts-dejavu-core curl
           pip install -q --upgrade "yt-dlp[default]" curl_cffi pillow
+          curl -fsSL https://deno.land/install.sh | sh || true
+          echo "$HOME/.deno/bin" >> $GITHUB_PATH
+          export PATH="$HOME/.deno/bin:$PATH"
+          deno --version
           yt-dlp --version
-          node --version
 
       - name: Validate font
         run: |
@@ -236,10 +239,11 @@ jobs:
             DOWNLOADED="false"
             rm -f /tmp/source_video.mp4
 
-            # Method 1: yt-dlp with cookies + impersonate
+            # Method 1: yt-dlp with cookies + impersonate + tv_embedded (bypasses n-challenge)
             if [ "$DOWNLOADED" = "false" ]; then
-              echo "--- Method 1: yt-dlp cookies + impersonate chrome ---"
+              echo "--- Method 1: yt-dlp tv_embedded + impersonate chrome ---"
               yt-dlp $COOKIES --impersonate chrome \
+                --extractor-args "youtube:player_client=tv_embedded" \
                 -f "bestvideo[height<=1080]+bestaudio/best[height<=1080]/best" \
                 --merge-output-format mp4 \
                 -o "/tmp/source_video.mp4" \
@@ -251,14 +255,17 @@ jobs:
               fi
             fi
 
-            # Method 2: yt-dlp ios player client
+            # Method 2: yt-dlp with deno + default client (n-challenge solver)
             if [ "$DOWNLOADED" = "false" ]; then
-              echo "--- Method 2: yt-dlp ios player client ---"
+              echo "--- Method 2: yt-dlp default + impersonate chrome ---"
               rm -f /tmp/source_video.mp4
-              yt-dlp $COOKIES \
-                --extractor-args "youtube:player_client=ios,web" \
-                -f "best" -o "/tmp/source_video.mp4" \
-                --no-check-certificates "$URL" 2>&1 | tail -5 || true
+              export PATH="$HOME/.deno/bin:$PATH"
+              yt-dlp $COOKIES --impersonate chrome \
+                -f "bestvideo[height<=1080]+bestaudio/best[height<=1080]/best" \
+                --merge-output-format mp4 \
+                -o "/tmp/source_video.mp4" \
+                --no-check-certificates --socket-timeout 60 \
+                "$URL" 2>&1 | tail -5 || true
               if [ -f "/tmp/source_video.mp4" ] && [ -s "/tmp/source_video.mp4" ]; then
                 DOWNLOADED="true"
                 echo "OK: $(du -h /tmp/source_video.mp4 | cut -f1)"
@@ -269,9 +276,9 @@ jobs:
             if [ "$DOWNLOADED" = "false" ]; then
               echo "--- Method 3: yt-dlp mweb player client ---"
               rm -f /tmp/source_video.mp4
-              yt-dlp \
+              export PATH="$HOME/.deno/bin:$PATH"
+              yt-dlp $COOKIES \
                 --extractor-args "youtube:player_client=mweb" \
-                --user-agent "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1" \
                 -f "best" -o "/tmp/source_video.mp4" \
                 --no-check-certificates "$URL" 2>&1 | tail -5 || true
               if [ -f "/tmp/source_video.mp4" ] && [ -s "/tmp/source_video.mp4" ]; then
