@@ -437,13 +437,12 @@ jobs:
 
           # All streams: cycle between video and black screen with text
           # Audio always plays from source (uninterrupted)
-          # Using \\, to escape commas inside expressions for FFmpeg filter parser
-          ESCAPED_CYCLE_SEC="${CYCLE_SEC}"
-          ESCAPED_VIDEO_SEC="${VIDEO_SEC}"
+          # Use single quotes around enable expression so FFmpeg filter parser
+          # treats commas as function-argument separators, not option separators
           VF="[0:v]scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black,format=yuv420p[scaled];"
           VF="${VF}color=c=black:s=1920x1080:r=30[bg];"
           VF="${VF}[bg]drawtext=text='${ESCAPED_TEXT}':fontfile=$FONT:fontsize=72:fontcolor=white:x=(w-text_w)/2:y=(h-text_h)/2:borderw=3:bordercolor=black[bgtext];"
-          VF="${VF}[bgtext][scaled]overlay=0:0:enable=gte(mod(T\\,${ESCAPED_CYCLE_SEC})\\,${ESCAPED_VIDEO_SEC})[cycled];"
+          VF="${VF}[bgtext][scaled]overlay=0:0:enable='gte(mod(T,${CYCLE_SEC}),${VIDEO_SEC})'[cycled];"
 
           CURRENT="cycled"
           INPUT_IDX=1
@@ -552,7 +551,7 @@ jobs:
           for attempt in $(seq 1 50); do
             echo "=== Stream attempt $attempt at $(date) ==="
 
-            # Read filter complex from file (preserves backslash escaping)
+            # Read filter from file (preserves backslash escaping)
             FILTER=$(cat /tmp/filter_complex.txt)
 
             ffmpeg -hide_banner -loglevel warning \
