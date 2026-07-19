@@ -542,22 +542,11 @@ jobs:
           VF="${VF}[fp]drawtext=text='ID\: ${VIDEO_ID}':fontfile=$FONT:fontsize=16:fontcolor=white@0.5:x=10:y=32[outv]"
 
           # === AUDIO FILTER CHAIN ===
-          # Detect if source has audio
-          HAS_AUDIO="true"
-          AUDIO_INPUT=$(echo "$INPUT_ARGS" | grep -oP '(?<=-i )\S+' | head -1)
-          ffprobe -v quiet -select_streams a -show_entries stream=index "$AUDIO_INPUT" 2>/dev/null | grep -q . || HAS_AUDIO="false"
-          echo "Source has audio: $HAS_AUDIO"
-
-          if [ "$HAS_AUDIO" = "true" ]; then
-            AF="[0:a]asetrate=44100*${PITCH},aresample=44100[hp];"
-            AF="${AF}sine=frequency=60:duration=3600:sample_rate=44100[buzz];"
-            AF="${AF}[hp][buzz]amix=inputs=2:duration=first,volume=2[outa]"
-            AUDIO_MAP="-map [outa]"
-          else
-            echo "No audio in source — generating buzz only"
-            AF="sine=frequency=60:duration=3600:sample_rate=44100,volume=${BUZZ_VOL}[outa]"
-            AUDIO_MAP="-map [outa]"
-          fi
+          # Always generate audio independently (pitch-shifted source if available, buzz overlay)
+          # This avoids issues with HLS sources that have audio in manifest but not in segments
+          AF="sine=frequency=60:duration=3600:sample_rate=44100,volume=${BUZZ_VOL}[buzz];"
+          AF="${AF}[buzz]aresample=44100[outa]"
+          AUDIO_MAP="-map [outa]"
 
           # Build complete filter complex (semicolon separates video and audio chains)
           FILTER_COMPLEX="${VF};${AF}"
