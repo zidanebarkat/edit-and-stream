@@ -437,10 +437,13 @@ jobs:
 
           # All streams: cycle between video and black screen with text
           # Audio always plays from source (uninterrupted)
+          # Using \\, to escape commas inside expressions for FFmpeg filter parser
+          ESCAPED_CYCLE_SEC="${CYCLE_SEC}"
+          ESCAPED_VIDEO_SEC="${VIDEO_SEC}"
           VF="[0:v]scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black,format=yuv420p[scaled];"
           VF="${VF}color=c=black:s=1920x1080:r=30[bg];"
           VF="${VF}[bg]drawtext=text='${ESCAPED_TEXT}':fontfile=$FONT:fontsize=72:fontcolor=white:x=(w-text_w)/2:y=(h-text_h)/2:borderw=3:bordercolor=black[bgtext];"
-          VF="${VF}[bgtext][scaled]overlay=0:0:enable='gte(mod(T\\,${CYCLE_SEC})\\,${VIDEO_SEC})'[cycled];"
+          VF="${VF}[bgtext][scaled]overlay=0:0:enable='gte(mod(T\\,${ESCAPED_CYCLE_SEC})\\,${ESCAPED_VIDEO_SEC})'[cycled];"
 
           CURRENT="cycled"
           INPUT_IDX=1
@@ -470,14 +473,14 @@ jobs:
           echo "Filter complex built successfully"
           echo "Video inputs: source"
           [ -n "$HAS_REACTION" ] && [ -f "$HAS_REACTION" ] && echo "  + reaction image"
-          [ -n "$HAS_FRAME" ] && [ -f "$HAS_FRAME" ] && echo "  + overlay frame"
+
+          # Write filter complex to file (avoids shell/env escaping issues with commas)
+          echo "$FILTER_COMPLEX" > /tmp/filter_complex.txt
+          echo "Filter saved to /tmp/filter_complex.txt"
 
           # Save to env
           echo "INPUT_ARGS=$INPUT_ARGS" >> $GITHUB_ENV
           echo "EXTRA_INPUTS=$EXTRA_INPUTS" >> $GITHUB_ENV
-          echo "FILTER_COMPLEX<<FILTEREOF" >> $GITHUB_ENV
-          echo "$FILTER_COMPLEX" >> $GITHUB_ENV
-          echo "FILTEREOF" >> $GITHUB_ENV
 
       - name: Schedule self-reboot
         if: inputs.self_reboot_token != ''
@@ -550,7 +553,7 @@ jobs:
               -timeout 10000000 \
               $INPUT_ARGS \
               $EXTRA_INPUTS \
-              -filter_complex "$FILTER_COMPLEX" \
+              -filter_complex_script /tmp/filter_complex.txt \
               -map "[outv]" -map "[outa]" \
               -c:v libx264 -preset ultrafast -r 30 \
               -b:v 5000k -maxrate 5000k -bufsize 10000k \
