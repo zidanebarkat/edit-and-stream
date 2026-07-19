@@ -395,8 +395,7 @@ jobs:
           import sys, json, base64, re, urllib.request
           data = json.load(sys.stdin)
           channels = data.get('channels', [])
-          print(f'Found {len(channels)} channels')
-          # Try albaplayer mobile_links first (direct HLS)
+          print(f'Found {len(channels)} channels', file=sys.stderr)
           for ch in channels:
               ml = ch.get('mobile_link', '')
               if ml and 'albaplayer' in ml:
@@ -408,12 +407,24 @@ jobs:
                       if m:
                           raw = base64.b64decode(m.group(1) + '==').decode()
                           if 'm3u8' in raw or 'hls' in raw:
-                              print(f'HLS:{raw}')
-                              sys.exit(0)
+                              # Validate the HLS URL is actually reachable
+                              try:
+                                  vreq = urllib.request.Request(raw, headers={'User-Agent': 'Mozilla/5.0'})
+                                  vresp = urllib.request.urlopen(vreq, timeout=8)
+                                  data_check = vresp.read(256).decode('utf-8', errors='replace')
+                                  if '#EXTM3U' in data_check or '#EXT-X-' in data_check:
+                                      print(f'Found working HLS: {raw}', file=sys.stderr)
+                                      print(f'HLS:{raw}')
+                                      sys.exit(0)
+                                  else:
+                                      print(f'  Invalid HLS content from {raw}', file=sys.stderr)
+                              except Exception as ve:
+                                  print(f'  HLS validation failed {raw}: {ve}', file=sys.stderr)
                   except Exception as e:
                       print(f'  Failed {ml}: {e}', file=sys.stderr)
           print('NO_HLS')
-          " 2>/dev/null > /tmp/kora_hls.txt || true
+          " 2>/tmp/kora_resolve_log.txt > /tmp/kora_hls.txt || true
+                    cat /tmp/kora_resolve_log.txt 2>/dev/null || true
                     if grep -q "^HLS:" /tmp/kora_hls.txt 2>/dev/null; then
                       HLS_URL=$(grep "^HLS:" /tmp/kora_hls.txt | head -1 | sed 's/^HLS://')
                       echo "Resolved HLS: $HLS_URL"
