@@ -450,10 +450,12 @@ jobs:
               INPUT_IDX=$((INPUT_IDX + 1))
             fi
 
-            # Overlay transparent frame (on top)
+            # Overlay transparent frame (scale to full 1920x1080, on top)
             if [ -n "$HAS_FRAME" ] && [ -f "$HAS_FRAME" ]; then
-              VF="${VF}[${CURRENT}][${INPUT_IDX}:v]overlay=0:0:format=auto[framed];"
+              VF="${VF}[${INPUT_IDX}:v]scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2:color=black@0[frame_sm];"
+              VF="${VF}[${CURRENT}][frame_sm]overlay=0:0:format=auto[framed];"
               CURRENT="framed"
+              INPUT_IDX=$((INPUT_IDX + 1))
             fi
 
             # Fingerprint watermark
@@ -480,10 +482,12 @@ jobs:
               INPUT_IDX=$((INPUT_IDX + 1))
             fi
 
-            # Overlay transparent frame (on top)
+            # Overlay transparent frame (scale to full 1920x1080, on top)
             if [ -n "$HAS_FRAME" ] && [ -f "$HAS_FRAME" ]; then
-              VF="${VF}[${CURRENT}][${INPUT_IDX}:v]overlay=0:0:format=auto[framed];"
+              VF="${VF}[${INPUT_IDX}:v]scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2:color=black@0[frame_sm];"
+              VF="${VF}[${CURRENT}][frame_sm]overlay=0:0:format=auto[framed];"
               CURRENT="framed"
+              INPUT_IDX=$((INPUT_IDX + 1))
             fi
 
             # Fingerprint watermark
