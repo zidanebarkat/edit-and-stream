@@ -96,7 +96,7 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y -qq --no-install-recommends \
             ffmpeg fonts-dejavu-core curl
-          pip install -q yt-dlp curl_cffi pillow
+          pip install -q "yt-dlp[default]" curl_cffi pillow
 
       - name: Validate font
         run: |
@@ -217,16 +217,31 @@ jobs:
             echo "Source: Direct media (looping)"
             INPUT="stream_loop:-1:$URL"
           elif echo "$URL" | grep -qiE 'youtube\.com|youtu\.be'; then
-            echo "Source: YouTube"
-            HLS=$(yt-dlp $COOKIES -g --socket-timeout 30 "$URL" 2>/dev/null | tail -1) || true
+            echo "Source: YouTube (with impersonate)"
+            HLS=$(yt-dlp $COOKIES --impersonate chrome -g --socket-timeout 30 "$URL" 2>&1 | tail -1) || true
+            echo "yt-dlp output: $HLS"
+            if [ -z "$HLS" ]; then
+              echo "yt-dlp failed, trying curl_cffi fallback..."
+              HLS=$(python3 -c "
+          import curl_cffi.requests as r
+          import json, re
+          resp = r.get('$URL', impersonate='chrome')
+          # try to extract m3u8 from page
+          m3u8s = re.findall(r'(https?://[^\s\"]+\.m3u8[^\s\"]*)', resp.text)
+          if m3u8s:
+              print(m3u8s[-1])
+          " 2>/dev/null) || true
+            fi
             if [ -z "$HLS" ]; then
               echo "ERROR: Could not resolve YouTube URL"
               exit 1
             fi
+            echo "Resolved to: $HLS"
             INPUT="$HLS"
           else
-            echo "Source: Generic URL (trying yt-dlp first)"
-            HLS=$(yt-dlp $COOKIES -g --socket-timeout 30 "$URL" 2>/dev/null | tail -1) || true
+            echo "Source: Generic URL (trying yt-dlp with impersonate)"
+            HLS=$(yt-dlp $COOKIES --impersonate chrome -g --socket-timeout 30 "$URL" 2>&1 | tail -1) || true
+            echo "yt-dlp output: $HLS"
             if [ -n "$HLS" ]; then
               INPUT="$HLS"
             else
