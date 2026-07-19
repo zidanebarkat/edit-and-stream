@@ -1,0 +1,418 @@
+name: Edit & Stream Pipeline
+
+on:
+  workflow_dispatch:
+    inputs:
+      platform:
+        description: 'Target platform'
+        required: true
+        type: choice
+        options:
+          - Facebook
+          - TikTok
+          - YouTube
+          - Twitch
+          - Kick
+          - Instagram
+          - Custom RTMP
+      action:
+        description: 'Action'
+        required: true
+        type: choice
+        options: [start, stop]
+      source_url:
+        description: 'Source video/stream URL'
+        required: true
+      rtmp_url:
+        description: 'RTMP URL (auto-filled for known platforms, or custom)'
+        required: false
+        default: ''
+      stream_key:
+        description: 'Stream key'
+        required: false
+        default: ''
+      video_id:
+        description: 'Video ID (displayed as text overlay)'
+        required: true
+      fingerprint:
+        description: 'Browser fingerprint string (watermark + anti-detect seed)'
+        required: true
+      overlay_text:
+        description: 'Text shown during black screen segments'
+        required: true
+      reaction_image:
+        description: 'URL to reaction image (webcam spot, bottom-right)'
+        required: false
+        default: ''
+      overlay_frame:
+        description: 'URL to transparent frame PNG (top layer)'
+        required: false
+        default: ''
+      video_mins:
+        description: 'Minutes of source video per cycle'
+        required: false
+        default: '5'
+      black_mins:
+        description: 'Minutes of black screen per cycle'
+        required: false
+        default: '5'
+      pitch:
+        description: 'Audio pitch multiplier (1.0 = normal, 1.5 = high)'
+        required: false
+        default: '1.5'
+      buzz_volume:
+        description: 'Background buzz volume (0.0 = off, 0.3 = loud)'
+        required: false
+        default: '0.15'
+      cookies_b64:
+        description: 'Base64-encoded cookies (Netscape format, for YouTube etc)'
+        required: false
+        default: ''
+      self_reboot_token:
+        description: 'GitHub PAT for auto-restart before 6h limit'
+        required: false
+        default: ''
+
+env:
+  FONT: /usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf
+
+jobs:
+  stream:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    if: github.event.inputs.action == 'start'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache apt packages
+        uses: actions/cache@v4
+        with:
+          path: /var/cache/apt/archives
+          key: apt-${{ runner.os }}-${{ hashFiles('.github/workflows/edit-and-stream.yml') }}
+          restore-keys: apt-${{ runner.os }}-
+
+      - name: Install deps
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq --no-install-recommends \
+            ffmpeg fonts-dejavu-core curl
+          pip install -q yt-dlp curl_cffi pillow
+
+      - name: Validate font
+        run: |
+          [ -f "$FONT" ] || { echo "FATAL: font missing at $FONT"; exit 1; }
+
+      - name: Setup cookies
+        run: |
+          if [ -n "${{ inputs.cookies_b64 }}" ]; then
+            echo "${{ inputs.cookies_b64 }}" | base64 -d > /tmp/cookies.txt
+            echo "COOKIES=--cookies /tmp/cookies.txt" >> $GITHUB_ENV
+            echo "Cookies loaded ($(wc -c < /tmp/cookies.txt) bytes)"
+          else
+            echo "COOKIES=" >> $GITHUB_ENV
+          fi
+
+      - name: Download optional assets
+        run: |
+          mkdir -p /tmp/assets
+          ASSETS_OK="true"
+
+          if [ -n "${{ inputs.reaction_image }}" ]; then
+            echo "Downloading reaction image..."
+            curl -fsSL -o /tmp/assets/reaction.png "${{ inputs.reaction_image }}" 2>/dev/null \
+              || python3 -c "
+          import curl_cffi.requests as r
+          resp = r.get('${{ inputs.reaction_image }}', impersonate='chrome')
+          with open('/tmp/assets/reaction.png','wb') as f: f.write(resp.content)
+          " 2>/dev/null \
+              || { echo "WARN: Could not download reaction image"; ASSETS_OK="false"; }
+            if [ -f /tmp/assets/reaction.png ]; then
+              echo "REACTION_IMG=/tmp/assets/reaction.png" >> $GITHUB_ENV
+              echo "Reaction image downloaded ($(wc -c < /tmp/assets/reaction.png) bytes)"
+            fi
+          fi
+
+          if [ -n "${{ inputs.overlay_frame }}" ]; then
+            echo "Downloading overlay frame..."
+            curl -fsSL -o /tmp/assets/frame.png "${{ inputs.overlay_frame }}" 2>/dev/null \
+              || python3 -c "
+          import curl_cffi.requests as r
+          resp = r.get('${{ inputs.overlay_frame }}', impersonate='chrome')
+          with open('/tmp/assets/frame.png','wb') as f: f.write(resp.content)
+          " 2>/dev/null \
+              || { echo "WARN: Could not download overlay frame"; }
+            if [ -f /tmp/assets/frame.png ]; then
+              echo "OVERLAY_FRAME=/tmp/assets/frame.png" >> $GITHUB_ENV
+              echo "Overlay frame downloaded ($(wc -c < /tmp/assets/frame.png) bytes)"
+            fi
+          fi
+
+      - name: Determine RTMP output
+        id: output
+        env:
+          PLATFORM: ${{ github.event.inputs.platform }}
+          RTMP_URL: ${{ inputs.rtmp_url }}
+          STREAM_KEY: ${{ inputs.stream_key }}
+        run: |
+          OUTPUT_URL=""
+
+          case "$PLATFORM" in
+            Facebook)
+              OUTPUT_URL="${RTMP_URL:-rtmps://live-api-s.facebook.com:443/rtmp/}"
+              OUTPUT_URL="${OUTPUT_URL}${STREAM_KEY}"
+              ;;
+            TikTok)
+              OUTPUT_URL="${RTMP_URL}"
+              if [ -z "$STREAM_KEY" ] && [[ "$OUTPUT_URL" != *"/"* ]]; then
+                OUTPUT_URL="rtmp://push.tiktokv.com/live/${STREAM_KEY}"
+              else
+                OUTPUT_URL="${OUTPUT_URL}${STREAM_KEY}"
+              fi
+              ;;
+            YouTube)
+              OUTPUT_URL="rtmp://a.rtmp.youtube.com/live2/${STREAM_KEY}"
+              if [ -n "$RTMP_URL" ]; then
+                OUTPUT_URL="${RTMP_URL}${STREAM_KEY}"
+              fi
+              ;;
+            Twitch)
+              OUTPUT_URL="rtmp://live.twitch.tv/app/${STREAM_KEY}"
+              if [ -n "$RTMP_URL" ]; then
+                OUTPUT_URL="${RTMP_URL}${STREAM_KEY}"
+              fi
+              ;;
+            Kick)
+              OUTPUT_URL="${RTMP_URL:-rtmp://fa723fc1b7b7.entrypoint.livekick.tv/app/}${STREAM_KEY}"
+              ;;
+            Instagram)
+              OUTPUT_URL="${RTMP_URL:-rtmps://live-api-s.facebook.com:443/rtmp/}${STREAM_KEY}"
+              ;;
+            Custom\ RTMP)
+              OUTPUT_URL="${RTMP_URL}${STREAM_KEY}"
+              ;;
+          esac
+
+          if [ -z "$OUTPUT_URL" ] || [ -z "$STREAM_KEY" ]; then
+            echo "ERROR: Could not determine output URL. Check RTMP_URL and STREAM_KEY."
+            exit 1
+          fi
+
+          echo "Platform: $PLATFORM"
+          echo "Output URL: $OUTPUT_URL"
+          echo "url=$OUTPUT_URL" >> $GITHUB_OUTPUT
+
+      - name: Resolve source URL
+        id: resolve
+        env:
+          SOURCE_URL: ${{ inputs.source_url }}
+          COOKIES: ${{ env.COOKIES }}
+        run: |
+          INPUT=""
+          URL="$SOURCE_URL"
+
+          if echo "$URL" | grep -qiE '\.(m3u8)($|\?)'; then
+            echo "Source: HLS direct"
+            INPUT="$URL"
+          elif echo "$URL" | grep -qiE '\.(mp4|mkv|avi|mov|webm)($|\?)'; then
+            echo "Source: Direct media (looping)"
+            INPUT="stream_loop:-1:$URL"
+          elif echo "$URL" | grep -qiE 'youtube\.com|youtu\.be'; then
+            echo "Source: YouTube"
+            HLS=$(yt-dlp $COOKIES -g --socket-timeout 30 "$URL" 2>/dev/null | tail -1) || true
+            if [ -z "$HLS" ]; then
+              echo "ERROR: Could not resolve YouTube URL"
+              exit 1
+            fi
+            INPUT="$HLS"
+          else
+            echo "Source: Generic URL (trying yt-dlp first)"
+            HLS=$(yt-dlp $COOKIES -g --socket-timeout 30 "$URL" 2>/dev/null | tail -1) || true
+            if [ -n "$HLS" ]; then
+              INPUT="$HLS"
+            else
+              echo "Falling back to direct URL"
+              INPUT="stream_loop:-1:$URL"
+            fi
+          fi
+
+          echo "Resolved input: $INPUT"
+          echo "input=$INPUT" >> $GITHUB_OUTPUT
+
+      - name: Build FFmpeg filter chain
+        id: build
+        env:
+          INPUT: ${{ steps.resolve.outputs.input }}
+          OVERLAY_TEXT: ${{ inputs.overlay_text }}
+          VIDEO_ID: ${{ inputs.video_id }}
+          FINGERPRINT: ${{ inputs.fingerprint }}
+          VIDEO_MINS: ${{ inputs.video_mins }}
+          BLACK_MINS: ${{ inputs.black_mins }}
+          PITCH: ${{ inputs.pitch }}
+          BUZZ_VOL: ${{ inputs.buzz_volume }}
+          OUTPUT_URL: ${{ steps.output.outputs.url }}
+          HAS_REACTION: ${{ env.REACTION_IMG }}
+          HAS_FRAME: ${{ env.OVERLAY_FRAME }}
+        run: |
+          # Calculate cycle timing
+          VIDEO_SEC=$((VIDEO_MINS * 60))
+          BLACK_SEC=$((BLACK_MINS * 60))
+          CYCLE_SEC=$((VIDEO_SEC + BLACK_SEC))
+          echo "Cycle: ${VIDEO_SEC}s video + ${BLACK_SEC}s black = ${CYCLE_SEC}s total"
+
+          # Build input args
+          INPUT_ARGS=""
+          IFS=':' read -r PROTO INPUT_PATH <<< "$INPUT"
+          if [ "$PROTO" = "stream_loop" ]; then
+            INPUT_ARGS="-stream_loop -1 -re -i $INPUT_PATH"
+          else
+            INPUT_ARGS="-re -i $INPUT"
+          fi
+
+          # Add overlay frame input
+          EXTRA_INPUTS=""
+          VF_POST=""
+          if [ -n "$HAS_REACTION" ] && [ -f "$HAS_REACTION" ]; then
+            EXTRA_INPUTS="$EXTRA_INPUTS -i $HAS_REACTION"
+          fi
+          if [ -n "$HAS_FRAME" ] && [ -f "$HAS_FRAME" ]; then
+            EXTRA_INPUTS="$EXTRA_INPUTS -i $HAS_FRAME"
+          fi
+
+          # === VIDEO FILTER CHAIN ===
+
+          # Step 1: Scale source to 1920x1080
+          VF="[0:v]scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black,format=yuv420p[scaled];"
+
+          # Step 2: Black background with overlay text
+          VF="${VF}color=c=black:s=1920x1080:r=30[bg];"
+          ESCAPED_TEXT=$(echo "$OVERLAY_TEXT" | sed "s/'/'\\\\''/g")
+          VF="${VF}[bg]drawtext=text='${ESCAPED_TEXT}':fontfile=$FONT:fontsize=72:fontcolor=white:x=(w-text_w)/2:y=(h-text_h)/2:borderw=3:bordercolor=black[bgtext];"
+
+          # Step3: Cycle between video and black screen
+          VF="${VF}[bgtext][scaled]overlay=0:0:enable='lt(mod(T\\,${CYCLE_SEC})\\,${VIDEO_SEC})'[cycled];"
+
+          CURRENT="cycled"
+
+          # Step4: Overlay reaction image (webcam spot: bottom-right)
+          INPUT_IDX=1
+          if [ -n "$HAS_REACTION" ] && [ -f "$HAS_REACTION" ]; then
+            VF="${VF}[${CURRENT}][${INPUT_IDX}:v]overlay=W-w-20:H-h-20[reacted];"
+            CURRENT="reacted"
+            INPUT_IDX=$((INPUT_IDX + 1))
+          fi
+
+          # Step 5: Overlay transparent frame (on top of everything)
+          if [ -n "$HAS_FRAME" ] && [ -f "$HAS_FRAME" ]; then
+            VF="${VF}[${CURRENT}][${INPUT_IDX}:v]overlay=0:0:format=auto[framed];"
+            CURRENT="framed"
+          fi
+
+          # Step 6: Fingerprint watermark (top-left, semi-transparent)
+          FP_ESCAPED=$(echo "$FINGERPRINT" | sed "s/'/'\\\\''/g")
+          VF="${VF}[${CURRENT}]drawtext=text='FP\: ${FP_ESCAPED}':fontfile=$FONT:fontsize=16:fontcolor=white@0.5:x=10:y=10[fp];"
+
+          # Step 7: Video ID text (below fingerprint)
+          VF="${VF}[fp]drawtext=text='ID\: ${VIDEO_ID}':fontfile=$FONT:fontsize=16:fontcolor=white@0.5:x=10:y=32[outv]"
+
+          # === AUDIO FILTER CHAIN ===
+          # High pitch
+          AF="[0:a]asetrate=44100*${PITCH},aresample=44100[hp];"
+
+          # Background buzz (60Hz sine wave = electrical hum)
+          AF="${AF}sine=frequency=60:duration=3600:sample_rate=44100[buzz];"
+
+          # Mix pitch + buzz
+          AF="${AF}[hp][buzz]amix=inputs=2:duration=first:volume=1[outa]"
+
+          # Build complete filter complex
+          FILTER_COMPLEX="${VF};${AF}"
+
+          echo "Filter complex built successfully"
+          echo "Video inputs: source"
+          [ -n "$HAS_REACTION" ] && [ -f "$HAS_REACTION" ] && echo "  + reaction image"
+          [ -n "$HAS_FRAME" ] && [ -f "$HAS_FRAME" ] && echo "  + overlay frame"
+
+          # Save to env
+          echo "INPUT_ARGS=$INPUT_ARGS" >> $GITHUB_ENV
+          echo "EXTRA_INPUTS=$EXTRA_INPUTS" >> $GITHUB_ENV
+          echo "FILTER_COMPLEX<<FILTEREOF" >> $GITHUB_ENV
+          echo "$FILTER_COMPLEX" >> $GITHUB_ENV
+          echo "FILTEREOF" >> $GITHUB_ENV
+
+      - name: Schedule self-reboot
+        if: inputs.self_reboot_token != ''
+        run: |
+          (sleep 21000 && curl -s -X POST \
+            -H "Authorization: Bearer ${{ inputs.self_reboot_token }}" \
+            -H "Accept: application/vnd.github.v3+json" \
+            "https://api.github.com/repos/${{ github.repository }}/actions/workflows/edit-and-stream.yml/dispatches" \
+            -d '{"ref":"main","inputs":{
+              "platform":"${{ inputs.platform }}",
+              "action":"start",
+              "source_url":"${{ inputs.source_url }}",
+              "rtmp_url":"${{ inputs.rtmp_url }}",
+              "stream_key":"${{ inputs.stream_key }}",
+              "video_id":"${{ inputs.video_id }}",
+              "fingerprint":"${{ inputs.fingerprint }}",
+              "overlay_text":"${{ inputs.overlay_text }}",
+              "reaction_image":"${{ inputs.reaction_image }}",
+              "overlay_frame":"${{ inputs.overlay_frame }}",
+              "video_mins":"${{ inputs.video_mins }}",
+              "black_mins":"${{ inputs.black_mins }}",
+              "pitch":"${{ inputs.pitch }}",
+              "buzz_volume":"${{ inputs.buzz_volume }}",
+              "cookies_b64":"${{ inputs.cookies_b64 }}",
+              "self_reboot_token":"${{ inputs.self_reboot_token }}"
+            }}') &
+          echo "Self-reboot scheduled (5.8h)"
+
+      - name: Start stream
+        env:
+          OUTPUT_URL: ${{ steps.output.outputs.url }}
+        run: |
+          echo "========================================="
+          echo "  EDIT & STREAM PIPELINE"
+          echo "========================================="
+          echo "Platform:   ${{ inputs.platform }}"
+          echo "Video ID:   ${{ inputs.video_id }}"
+          echo "Fingerprint: ${{ inputs.fingerprint }}"
+          echo "Cycle:      ${{ inputs.video_mins }}min video + ${{ inputs.black_mins }}min black"
+          echo "Pitch:      ${{ inputs.pitch }}x"
+          echo "Buzz:       ${{ inputs.buzz_volume }}"
+          echo "========================================="
+
+          for attempt in $(seq 1 50); do
+            echo "=== Stream attempt $attempt at $(date) ==="
+
+            ffmpeg -hide_banner -loglevel warning \
+              $INPUT_ARGS \
+              $EXTRA_INPUTS \
+              -filter_complex "$FILTER_COMPLEX" \
+              -map "[outv]" -map "[outa]" \
+              -c:v libx264 -preset ultrafast -r 30 \
+              -b:v 5000k -maxrate 5000k -bufsize 10000k \
+              -g 150 -x264-params "keyint=150:min-keyint=150" \
+              -pix_fmt yuv420p \
+              -c:a aac -b:a 128k -ar 44100 \
+              -flush_packets 1 \
+              -max_muxing_queue_size 9999 \
+              -f flv \
+              "$OUTPUT_URL"
+
+            EXIT_CODE=$?
+            echo "ffmpeg exited with code $EXIT_CODE"
+            SLEEP_TIME=$((attempt * 3))
+            [ $SLEEP_TIME -gt 30 ] && SLEEP_TIME=30
+            echo "Restarting in ${SLEEP_TIME}s..."
+            sleep $SLEEP_TIME
+          done
+
+  stop:
+    runs-on: ubuntu-latest
+    if: github.event.inputs.action == 'stop'
+    steps:
+      - name: Stop stream
+        run: |
+          echo "Stopping all FFmpeg processes..."
+          pkill -f ffmpeg || true
+          echo "Done"
