@@ -160,34 +160,46 @@ jobs:
 
           case "$PLATFORM" in
             Facebook)
-              OUTPUT_URL="${RTMP_URL:-rtmps://live-api-s.facebook.com:443/rtmp/}"
-              OUTPUT_URL="${OUTPUT_URL}${STREAM_KEY}"
+              if [ -n "$RTMP_URL" ]; then
+                OUTPUT_URL="${RTMP_URL}${STREAM_KEY}"
+              else
+                OUTPUT_URL="rtmps://live-api-s.facebook.com:443/rtmp/${STREAM_KEY}"
+              fi
               ;;
             TikTok)
-              OUTPUT_URL="${RTMP_URL}"
-              if [ -z "$STREAM_KEY" ] && [[ "$OUTPUT_URL" != *"/"* ]]; then
-                OUTPUT_URL="rtmp://push.tiktokv.com/live/${STREAM_KEY}"
+              if [ -n "$RTMP_URL" ]; then
+                OUTPUT_URL="${RTMP_URL}${STREAM_KEY}"
               else
-                OUTPUT_URL="${OUTPUT_URL}${STREAM_KEY}"
+                OUTPUT_URL="rtmp://push.tiktokv.com/live/${STREAM_KEY}"
               fi
               ;;
             YouTube)
-              OUTPUT_URL="rtmp://a.rtmp.youtube.com/live2/${STREAM_KEY}"
               if [ -n "$RTMP_URL" ]; then
                 OUTPUT_URL="${RTMP_URL}${STREAM_KEY}"
+              else
+                OUTPUT_URL="rtmp://a.rtmp.youtube.com/live2/${STREAM_KEY}"
               fi
               ;;
             Twitch)
-              OUTPUT_URL="rtmp://live.twitch.tv/app/${STREAM_KEY}"
               if [ -n "$RTMP_URL" ]; then
                 OUTPUT_URL="${RTMP_URL}${STREAM_KEY}"
+              else
+                OUTPUT_URL="rtmp://live.twitch.tv/app/${STREAM_KEY}"
               fi
               ;;
             Kick)
-              OUTPUT_URL="${RTMP_URL:-rtmp://fa723fc1b7b7.entrypoint.livekick.tv/app/}${STREAM_KEY}"
+              if [ -n "$RTMP_URL" ]; then
+                OUTPUT_URL="${RTMP_URL}${STREAM_KEY}"
+              else
+                OUTPUT_URL="rtmp://fa723fc1b7b7.entrypoint.livekick.tv/app/${STREAM_KEY}"
+              fi
               ;;
             Instagram)
-              OUTPUT_URL="${RTMP_URL:-rtmps://live-api-s.facebook.com:443/rtmp/}${STREAM_KEY}"
+              if [ -n "$RTMP_URL" ]; then
+                OUTPUT_URL="${RTMP_URL}${STREAM_KEY}"
+              else
+                OUTPUT_URL="rtmps://live-api-s.facebook.com:443/rtmp/${STREAM_KEY}"
+              fi
               ;;
             Custom\ RTMP)
               OUTPUT_URL="${RTMP_URL}${STREAM_KEY}"
@@ -214,43 +226,89 @@ jobs:
 
           if echo "$URL" | grep -qiE '\.(m3u8)($|\?)'; then
             echo "Source: HLS direct"
-            INPUT="$URL"
+            INPUT="-re -i $URL"
           elif echo "$URL" | grep -qiE '\.(mp4|mkv|avi|mov|webm)($|\?)'; then
             echo "Source: Direct media (looping)"
-            INPUT="stream_loop -1 -re -i $URL"
+            INPUT="-stream_loop -1 -re -i $URL"
           elif echo "$URL" | grep -qiE 'youtube\.com|youtu\.be'; then
-            echo "Source: YouTube - downloading video first..."
-            # Download video with yt-dlp (more reliable than streaming for non-live)
-            yt-dlp $COOKIES --impersonate chrome \
-              -f "bestvideo[height<=1080]+bestaudio/best[height<=1080]/best" \
-              --merge-output-format mp4 \
-              -o "/tmp/source_video.mp4" \
-              --no-check-certificates \
-              --socket-timeout 60 \
-              "$URL" 2>&1 || true
+            echo "Source: YouTube - trying multiple download methods..."
+            DOWNLOADED="false"
+            rm -f /tmp/source_video.mp4
 
-            if [ -f "/tmp/source_video.mp4" ] && [ -s "/tmp/source_video.mp4" ]; then
-              echo "Downloaded video: $(du -h /tmp/source_video.mp4 | cut -f1)"
-              INPUT="-stream_loop -1 -re -i /tmp/source_video.mp4"
-            else
-              echo "yt-dlp download failed, trying with extractor-args..."
+            # Method 1: yt-dlp with cookies + impersonate
+            if [ "$DOWNLOADED" = "false" ]; then
+              echo "--- Method 1: yt-dlp cookies + impersonate chrome ---"
               yt-dlp $COOKIES --impersonate chrome \
-                --extractor-args "youtube:player_client=web" \
-                -f "best" \
+                -f "bestvideo[height<=1080]+bestaudio/best[height<=1080]/best" \
+                --merge-output-format mp4 \
                 -o "/tmp/source_video.mp4" \
-                --no-check-certificates \
-                "$URL" 2>&1 || true
-
+                --no-check-certificates --socket-timeout 60 --retries 3 \
+                "$URL" 2>&1 | tail -5 || true
               if [ -f "/tmp/source_video.mp4" ] && [ -s "/tmp/source_video.mp4" ]; then
-                echo "Downloaded on retry: $(du -h /tmp/source_video.mp4 | cut -f1)"
-                INPUT="-stream_loop -1 -re -i /tmp/source_video.mp4"
-              else
-                echo "ERROR: Could not download YouTube video"
-                exit 1
+                DOWNLOADED="true"
+                echo "OK: $(du -h /tmp/source_video.mp4 | cut -f1)"
               fi
             fi
+
+            # Method 2: yt-dlp ios player client
+            if [ "$DOWNLOADED" = "false" ]; then
+              echo "--- Method 2: yt-dlp ios player client ---"
+              rm -f /tmp/source_video.mp4
+              yt-dlp $COOKIES \
+                --extractor-args "youtube:player_client=ios,web" \
+                -f "best" -o "/tmp/source_video.mp4" \
+                --no-check-certificates "$URL" 2>&1 | tail -5 || true
+              if [ -f "/tmp/source_video.mp4" ] && [ -s "/tmp/source_video.mp4" ]; then
+                DOWNLOADED="true"
+                echo "OK: $(du -h /tmp/source_video.mp4 | cut -f1)"
+              fi
+            fi
+
+            # Method 3: yt-dlp mweb player client
+            if [ "$DOWNLOADED" = "false" ]; then
+              echo "--- Method 3: yt-dlp mweb player client ---"
+              rm -f /tmp/source_video.mp4
+              yt-dlp \
+                --extractor-args "youtube:player_client=mweb" \
+                --user-agent "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1" \
+                -f "best" -o "/tmp/source_video.mp4" \
+                --no-check-certificates "$URL" 2>&1 | tail -5 || true
+              if [ -f "/tmp/source_video.mp4" ] && [ -s "/tmp/source_video.mp4" ]; then
+                DOWNLOADED="true"
+                echo "OK: $(du -h /tmp/source_video.mp4 | cut -f1)"
+              fi
+            fi
+
+            # Method 4: cobalt.tools API
+            if [ "$DOWNLOADED" = "false" ]; then
+              echo "--- Method 4: cobalt.tools API ---"
+              rm -f /tmp/source_video.mp4
+              COBALT_URL=$(python3 -c "
+          import json, urllib.request
+          data = json.dumps({'url': '$URL', 'vCodec': 'h264', 'vQuality': '1080', 'filenamePattern': 'basic'}).encode()
+          req = urllib.request.Request('https://api.cobalt.tools/api/json', data=data,
+              headers={'Content-Type': 'application/json', 'Accept': 'application/json'})
+          resp = urllib.request.urlopen(req, timeout=60)
+          print(json.loads(resp.read().decode()).get('url', ''))
+          " 2>/dev/null) || true
+              if [ -n "$COBALT_URL" ] && [ "$COBALT_URL" != "None" ]; then
+                echo "Cobalt URL obtained, downloading..."
+                curl -fsSL --max-time 300 -o /tmp/source_video.mp4 "$COBALT_URL" 2>&1 || true
+                if [ -f "/tmp/source_video.mp4" ] && [ -s "/tmp/source_video.mp4" ]; then
+                  DOWNLOADED="true"
+                  echo "OK: $(du -h /tmp/source_video.mp4 | cut -f1)"
+                fi
+              fi
+            fi
+
+            if [ "$DOWNLOADED" = "true" ]; then
+              INPUT="-stream_loop -1 -re -i /tmp/source_video.mp4"
+            else
+              echo "ERROR: All download methods failed"
+              exit 1
+            fi
           else
-            echo "Source: Generic URL (trying yt-dlp download)"
+            echo "Source: Generic URL (trying yt-dlp)"
             yt-dlp $COOKIES --impersonate chrome \
               -f "best" -o "/tmp/source_video.mp4" \
               --no-check-certificates "$URL" 2>&1 || true
@@ -260,7 +318,7 @@ jobs:
               INPUT="-stream_loop -1 -re -i /tmp/source_video.mp4"
             else
               echo "Falling back to direct URL"
-              INPUT="stream_loop -1 -re -i $URL"
+              INPUT="-stream_loop -1 -re -i $URL"
             fi
           fi
 
