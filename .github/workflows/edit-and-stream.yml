@@ -467,7 +467,7 @@ jobs:
           AF="${AF}sine=frequency=60:duration=3600:sample_rate=44100[buzz];"
 
           # Mix pitch + buzz
-          AF="${AF}[hp][buzz]amix=inputs=2:duration=first:volume=1[outa]"
+          AF="${AF}[hp][buzz]amix=inputs=2:duration=first[outa]"
 
           # Build complete filter complex
           FILTER_COMPLEX="${VF};${AF}"
