@@ -435,15 +435,9 @@ jobs:
           ESCAPED_TEXT=$(echo "$OVERLAY_TEXT" | sed "s/'/'\\\\''/g")
           FP_ESCAPED=$(echo "$FINGERPRINT" | sed "s/'/'\\\\''/g")
 
-          # All streams: cycle between video and black screen with text
-          # Audio always plays from source (uninterrupted)
-          # Comma-free enable expression: floor((T-CYCLE*floor(T/CYCLE))/VIDEO)
-          # Equivalent to gte(mod(T,CYCLE),VIDEO) but has NO commas,
-          # so FFmpeg's filter parser cannot split on them
-          VF="[0:v]scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black,format=yuv420p[scaled];"
-          VF="${VF}color=c=black:s=1920x1080:r=30[bg];"
-          VF="${VF}[bg]drawtext=text='${ESCAPED_TEXT}':fontfile=$FONT:fontsize=72:fontcolor=white:x=(w-text_w)/2:y=(h-text_h)/2:borderw=3:bordercolor=black[bgtext];"
-          VF="${VF}[bgtext][scaled]overlay=0:0:enable=floor((T-${CYCLE_SEC}*floor(T/${CYCLE_SEC}))/${VIDEO_SEC})[cycled];"
+          # Simple pipeline without cycling - video only with overlays
+          # Cycling will be added back once basic stream is confirmed working
+          VF="[0:v]scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black,format=yuv420p[cycled];"
 
           CURRENT="cycled"
           INPUT_IDX=1
