@@ -408,14 +408,11 @@ jobs:
           HAS_REACTION: ${{ env.REACTION_IMG }}
           HAS_FRAME: ${{ env.OVERLAY_FRAME }}
         run: |
-          # Detect live stream (m3u8 without -stream_loop)
-          IS_LIVE="false"
-          if echo "$INPUT" | grep -q '\.m3u8' && ! echo "$INPUT" | grep -q 'stream_loop'; then
-            IS_LIVE="true"
-            echo "Detected LIVE stream — skipping video/black cycling"
+          if [ "$IS_LIVE" = "true" ]; then
+            echo "Detected LIVE stream — cycling still enabled, audio uninterrupted"
           fi
 
-          # Calculate cycle timing (only used for recorded content)
+          # Calculate cycle timing
           VIDEO_SEC=$((VIDEO_MINS * 60))
           BLACK_SEC=$((BLACK_MINS * 60))
           CYCLE_SEC=$((VIDEO_SEC + BLACK_SEC))
@@ -438,52 +435,29 @@ jobs:
           ESCAPED_TEXT=$(echo "$OVERLAY_TEXT" | sed "s/'/'\\\\''/g")
           FP_ESCAPED=$(echo "$FINGERPRINT" | sed "s/'/'\\\\''/g")
 
-          if [ "$IS_LIVE" = "true" ]; then
-            # LIVE STREAM: scale + overlay text + watermarks (no cycling)
-            VF="[0:v]scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black,format=yuv420p,"
-            VF="${VF}drawtext=text='${ESCAPED_TEXT}':fontfile=$FONT:fontsize=72:fontcolor=white:x=(w-text_w)/2:y=(h-text_h)/2:borderw=3:bordercolor=black[scaled];"
+          # All streams: cycle between video and black screen with text
+          # Audio always plays from source (uninterrupted)
+          VF="[0:v]scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black,format=yuv420p[scaled];"
+          VF="${VF}color=c=black:s=1920x1080:r=30[bg];"
+          VF="${VF}[bg]drawtext=text='${ESCAPED_TEXT}':fontfile=$FONT:fontsize=72:fontcolor=white:x=(w-text_w)/2:y=(h-text_h)/2:borderw=3:bordercolor=black[bgtext];"
+          VF="${VF}[bgtext][scaled]overlay=0:0:enable='gte(mod(T\,${CYCLE_SEC})\,${VIDEO_SEC})'[cycled];"
 
-            CURRENT="scaled"
-            INPUT_IDX=1
+          CURRENT="cycled"
+          INPUT_IDX=1
 
-            # Overlay reaction image (bottom-right, scaled to 25%)
-            if [ -n "$HAS_REACTION" ] && [ -f "$HAS_REACTION" ]; then
-              VF="${VF}[${INPUT_IDX}:v]scale=iw*0.25:ih*0.25[reaction_sm];"
-              VF="${VF}[${CURRENT}][reaction_sm]overlay=W-w-20:H-h-20[reacted];"
-              CURRENT="reacted"
-              INPUT_IDX=$((INPUT_IDX + 1))
-            fi
-
-            # Fingerprint watermark
-            VF="${VF}[${CURRENT}]drawtext=text='FP\: ${FP_ESCAPED}':fontfile=$FONT:fontsize=16:fontcolor=white@0.5:x=10:y=10[fp];"
-
-            # Video ID text
-            VF="${VF}[fp]drawtext=text='ID\: ${VIDEO_ID}':fontfile=$FONT:fontsize=16:fontcolor=white@0.5:x=10:y=32[outv]"
-
-          else
-            # RECORDED CONTENT: cycle between video and black screen with text
-            VF="[0:v]scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black,format=yuv420p[scaled];"
-            VF="${VF}color=c=black:s=1920x1080:r=30[bg];"
-            VF="${VF}[bg]drawtext=text='${ESCAPED_TEXT}':fontfile=$FONT:fontsize=72:fontcolor=white:x=(w-text_w)/2:y=(h-text_h)/2:borderw=3:bordercolor=black[bgtext];"
-            VF="${VF}[bgtext][scaled]overlay=0:0:enable='lt(mod(T,${CYCLE_SEC}),${VIDEO_SEC})'[cycled];"
-
-            CURRENT="cycled"
-            INPUT_IDX=1
-
-            # Overlay reaction image (bottom-right, scaled to 25%)
-            if [ -n "$HAS_REACTION" ] && [ -f "$HAS_REACTION" ]; then
-              VF="${VF}[${INPUT_IDX}:v]scale=iw*0.25:ih*0.25[reaction_sm];"
-              VF="${VF}[${CURRENT}][reaction_sm]overlay=W-w-20:H-h-20[reacted];"
-              CURRENT="reacted"
-              INPUT_IDX=$((INPUT_IDX + 1))
-            fi
-
-            # Fingerprint watermark
-            VF="${VF}[${CURRENT}]drawtext=text='FP\: ${FP_ESCAPED}':fontfile=$FONT:fontsize=16:fontcolor=white@0.5:x=10:y=10[fp];"
-
-            # Video ID text
-            VF="${VF}[fp]drawtext=text='ID\: ${VIDEO_ID}':fontfile=$FONT:fontsize=16:fontcolor=white@0.5:x=10:y=32[outv]"
+          # Overlay reaction image (bottom-right, scaled to 25%)
+          if [ -n "$HAS_REACTION" ] && [ -f "$HAS_REACTION" ]; then
+            VF="${VF}[${INPUT_IDX}:v]scale=iw*0.25:ih*0.25[reaction_sm];"
+            VF="${VF}[${CURRENT}][reaction_sm]overlay=W-w-20:H-h-20[reacted];"
+            CURRENT="reacted"
+            INPUT_IDX=$((INPUT_IDX + 1))
           fi
+
+          # Fingerprint watermark
+          VF="${VF}[${CURRENT}]drawtext=text='FP\: ${FP_ESCAPED}':fontfile=$FONT:fontsize=16:fontcolor=white@0.5:x=10:y=10[fp];"
+
+          # Video ID text
+          VF="${VF}[fp]drawtext=text='ID\: ${VIDEO_ID}':fontfile=$FONT:fontsize=16:fontcolor=white@0.5:x=10:y=32[outv]"
 
           # === AUDIO FILTER CHAIN ===
           AF="[0:a]asetrate=44100*${PITCH},aresample=44100[hp];"
