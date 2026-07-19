@@ -95,9 +95,10 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq --no-install-recommends \
-            ffmpeg fonts-dejavu-core curl
+            ffmpeg fonts-dejavu-core curl nodejs
           pip install -q --upgrade "yt-dlp[default]" curl_cffi pillow
           yt-dlp --version
+          node --version
 
       - name: Validate font
         run: |
@@ -283,7 +284,10 @@ jobs:
             if [ "$DOWNLOADED" = "false" ]; then
               echo "--- Method 4: Invidious API ---"
               rm -f /tmp/source_video.mp4
-              VIDEO_ID=$(echo "$URL" | grep -oP '(?:v=|youtu\.be/)([a-zA-Z0-9_-]{11})' | tail -1 | sed 's/[?&]v=//;s/.*\///')
+              VIDEO_ID=$(echo "$URL" | grep -oP 'v=\K[a-zA-Z0-9_-]{11}' | head -1)
+              if [ -z "$VIDEO_ID" ]; then
+                VIDEO_ID=$(echo "$URL" | grep -oP 'youtu\.be/\K[a-zA-Z0-9_-]{11}' | head -1)
+              fi
               echo "Video ID: $VIDEO_ID"
               for INSTANCE in "https://inv.nadeko.net" "https://invidious.nerdvpn.de" "https://vid.puffyan.us" "https://invidious.privacyredirect.com"; do
                 echo "Trying $INSTANCE..."
@@ -321,7 +325,10 @@ jobs:
             if [ "$DOWNLOADED" = "false" ]; then
               echo "--- Method 5: Piped API ---"
               rm -f /tmp/source_video.mp4
-              VIDEO_ID=$(echo "$URL" | grep -oP '(?:v=|youtu\.be/)([a-zA-Z0-9_-]{11})' | tail -1 | sed 's/[?&]v=//;s/.*\///')
+              VIDEO_ID=$(echo "$URL" | grep -oP 'v=\K[a-zA-Z0-9_-]{11}' | head -1)
+              if [ -z "$VIDEO_ID" ]; then
+                VIDEO_ID=$(echo "$URL" | grep -oP 'youtu\.be/\K[a-zA-Z0-9_-]{11}' | head -1)
+              fi
               for INSTANCE in "https://pipedapi.kavin.rocks" "https://piped-api.privacy.com.de" "https://watchapi.whatever.social"; do
                 echo "Trying $INSTANCE..."
                 STREAM_URL=$(python3 -c "
