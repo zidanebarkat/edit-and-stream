@@ -498,8 +498,8 @@ jobs:
           AF="${AF}sine=frequency=60:duration=3600:sample_rate=44100[buzz];"
           AF="${AF}[hp][buzz]amix=inputs=2:duration=first[outa]"
 
-          # Build complete filter complex
-          FILTER_COMPLEX="${VF}${AF}"
+          # Build complete filter complex (semicolon separates video and audio chains)
+          FILTER_COMPLEX="${VF};${AF}"
 
           echo "Filter complex built successfully"
           echo "Video inputs: source"
