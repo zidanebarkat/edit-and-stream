@@ -404,7 +404,14 @@ jobs:
           HAS_REACTION: ${{ env.REACTION_IMG }}
           HAS_FRAME: ${{ env.OVERLAY_FRAME }}
         run: |
-          # Calculate cycle timing
+          # Detect live stream (m3u8 without -stream_loop)
+          IS_LIVE="false"
+          if echo "$INPUT" | grep -q '\.m3u8' && ! echo "$INPUT" | grep -q 'stream_loop'; then
+            IS_LIVE="true"
+            echo "Detected LIVE stream — skipping video/black cycling"
+          fi
+
+          # Calculate cycle timing (only used for recorded content)
           VIDEO_SEC=$((VIDEO_MINS * 60))
           BLACK_SEC=$((BLACK_MINS * 60))
           CYCLE_SEC=$((VIDEO_SEC + BLACK_SEC))
@@ -415,7 +422,6 @@ jobs:
 
           # Add overlay frame input
           EXTRA_INPUTS=""
-          VF_POST=""
           if [ -n "$HAS_REACTION" ] && [ -f "$HAS_REACTION" ]; then
             EXTRA_INPUTS="$EXTRA_INPUTS -i $HAS_REACTION"
           fi
@@ -425,52 +431,75 @@ jobs:
 
           # === VIDEO FILTER CHAIN ===
 
-          # Step 1: Scale source to 1920x1080
-          VF="[0:v]scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black,format=yuv420p[scaled];"
-
-          # Step 2: Black background with overlay text
-          VF="${VF}color=c=black:s=1920x1080:r=30[bg];"
           ESCAPED_TEXT=$(echo "$OVERLAY_TEXT" | sed "s/'/'\\\\''/g")
-          VF="${VF}[bg]drawtext=text='${ESCAPED_TEXT}':fontfile=$FONT:fontsize=72:fontcolor=white:x=(w-text_w)/2:y=(h-text_h)/2:borderw=3:bordercolor=black[bgtext];"
-
-          # Step3: Cycle between video and black screen
-          VF="${VF}[bgtext][scaled]overlay=0:0:enable='lt(mod(T\\,${CYCLE_SEC})\\,${VIDEO_SEC})'[cycled];"
-
-          CURRENT="cycled"
-
-          # Step4: Overlay reaction image (webcam spot: bottom-right)
-          INPUT_IDX=1
-          if [ -n "$HAS_REACTION" ] && [ -f "$HAS_REACTION" ]; then
-            VF="${VF}[${CURRENT}][${INPUT_IDX}:v]overlay=W-w-20:H-h-20[reacted];"
-            CURRENT="reacted"
-            INPUT_IDX=$((INPUT_IDX + 1))
-          fi
-
-          # Step 5: Overlay transparent frame (on top of everything)
-          if [ -n "$HAS_FRAME" ] && [ -f "$HAS_FRAME" ]; then
-            VF="${VF}[${CURRENT}][${INPUT_IDX}:v]overlay=0:0:format=auto[framed];"
-            CURRENT="framed"
-          fi
-
-          # Step 6: Fingerprint watermark (top-left, semi-transparent)
           FP_ESCAPED=$(echo "$FINGERPRINT" | sed "s/'/'\\\\''/g")
-          VF="${VF}[${CURRENT}]drawtext=text='FP\: ${FP_ESCAPED}':fontfile=$FONT:fontsize=16:fontcolor=white@0.5:x=10:y=10[fp];"
 
-          # Step 7: Video ID text (below fingerprint)
-          VF="${VF}[fp]drawtext=text='ID\: ${VIDEO_ID}':fontfile=$FONT:fontsize=16:fontcolor=white@0.5:x=10:y=32[outv]"
+          if [ "$IS_LIVE" = "true" ]; then
+            # LIVE STREAM: scale + overlay text + watermarks (no cycling)
+            VF="[0:v]scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black,format=yuv420p,"
+            VF="${VF}drawtext=text='${ESCAPED_TEXT}':fontfile=$FONT:fontsize=72:fontcolor=white:x=(w-text_w)/2:y=(h-text_h)/2:borderw=3:bordercolor=black"
+
+            CURRENT="0:v"
+            INPUT_IDX=1
+
+            # Overlay reaction image (bottom-right)
+            if [ -n "$HAS_REACTION" ] && [ -f "$HAS_REACTION" ]; then
+              VF="${VF}[${CURRENT}][${INPUT_IDX}:v]overlay=W-w-20:H-h-20[reacted];"
+              CURRENT="reacted"
+              INPUT_IDX=$((INPUT_IDX + 1))
+            else
+              VF="${VF};"
+            fi
+
+            # Overlay transparent frame (on top)
+            if [ -n "$HAS_FRAME" ] && [ -f "$HAS_FRAME" ]; then
+              VF="${VF}[${CURRENT}][${INPUT_IDX}:v]overlay=0:0:format=auto[framed];"
+              CURRENT="framed"
+            fi
+
+            # Fingerprint watermark
+            VF="${VF}[${CURRENT}]drawtext=text='FP\: ${FP_ESCAPED}':fontfile=$FONT:fontsize=16:fontcolor=white@0.5:x=10:y=10[fp];"
+
+            # Video ID text
+            VF="${VF}[fp]drawtext=text='ID\: ${VIDEO_ID}':fontfile=$FONT:fontsize=16:fontcolor=white@0.5:x=10:y=32[outv]"
+
+          else
+            # RECORDED CONTENT: cycle between video and black screen with text
+            VF="[0:v]scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black,format=yuv420p[scaled];"
+            VF="${VF}color=c=black:s=1920x1080:r=30[bg];"
+            VF="${VF}[bg]drawtext=text='${ESCAPED_TEXT}':fontfile=$FONT:fontsize=72:fontcolor=white:x=(w-text_w)/2:y=(h-text_h)/2:borderw=3:bordercolor=black[bgtext];"
+            VF="${VF}[bgtext][scaled]overlay=0:0:enable='lt(mod(T,${CYCLE_SEC}),${VIDEO_SEC})'[cycled];"
+
+            CURRENT="cycled"
+            INPUT_IDX=1
+
+            # Overlay reaction image (bottom-right)
+            if [ -n "$HAS_REACTION" ] && [ -f "$HAS_REACTION" ]; then
+              VF="${VF}[${CURRENT}][${INPUT_IDX}:v]overlay=W-w-20:H-h-20[reacted];"
+              CURRENT="reacted"
+              INPUT_IDX=$((INPUT_IDX + 1))
+            fi
+
+            # Overlay transparent frame (on top)
+            if [ -n "$HAS_FRAME" ] && [ -f "$HAS_FRAME" ]; then
+              VF="${VF}[${CURRENT}][${INPUT_IDX}:v]overlay=0:0:format=auto[framed];"
+              CURRENT="framed"
+            fi
+
+            # Fingerprint watermark
+            VF="${VF}[${CURRENT}]drawtext=text='FP\: ${FP_ESCAPED}':fontfile=$FONT:fontsize=16:fontcolor=white@0.5:x=10:y=10[fp];"
+
+            # Video ID text
+            VF="${VF}[fp]drawtext=text='ID\: ${VIDEO_ID}':fontfile=$FONT:fontsize=16:fontcolor=white@0.5:x=10:y=32[outv]"
+          fi
 
           # === AUDIO FILTER CHAIN ===
-          # High pitch
           AF="[0:a]asetrate=44100*${PITCH},aresample=44100[hp];"
-
-          # Background buzz (60Hz sine wave = electrical hum)
           AF="${AF}sine=frequency=60:duration=3600:sample_rate=44100[buzz];"
-
-          # Mix pitch + buzz
           AF="${AF}[hp][buzz]amix=inputs=2:duration=first[outa]"
 
           # Build complete filter complex
-          FILTER_COMPLEX="${VF};${AF}"
+          FILTER_COMPLEX="${VF}${AF}"
 
           echo "Filter complex built successfully"
           echo "Video inputs: source"
