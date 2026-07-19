@@ -437,9 +437,9 @@ jobs:
           if [ "$IS_LIVE" = "true" ]; then
             # LIVE STREAM: scale + overlay text + watermarks (no cycling)
             VF="[0:v]scale=1920:1080:force_original_aspect_ratio=decrease,pad=1920:1080:(ow-iw)/2:(oh-ih)/2:black,format=yuv420p,"
-            VF="${VF}drawtext=text='${ESCAPED_TEXT}':fontfile=$FONT:fontsize=72:fontcolor=white:x=(w-text_w)/2:y=(h-text_h)/2:borderw=3:bordercolor=black"
+            VF="${VF}drawtext=text='${ESCAPED_TEXT}':fontfile=$FONT:fontsize=72:fontcolor=white:x=(w-text_w)/2:y=(h-text_h)/2:borderw=3:bordercolor=black[scaled];"
 
-            CURRENT="0:v"
+            CURRENT="scaled"
             INPUT_IDX=1
 
             # Overlay reaction image (bottom-right)
@@ -447,8 +447,6 @@ jobs:
               VF="${VF}[${CURRENT}][${INPUT_IDX}:v]overlay=W-w-20:H-h-20[reacted];"
               CURRENT="reacted"
               INPUT_IDX=$((INPUT_IDX + 1))
-            else
-              VF="${VF};"
             fi
 
             # Overlay transparent frame (on top)
