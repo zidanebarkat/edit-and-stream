@@ -234,7 +234,7 @@ jobs:
 
           if echo "$URL" | grep -qiE '\.(m3u8)($|\?)'; then
             echo "Source: HLS direct"
-            INPUT="-re -i $URL"
+            INPUT="-re -analyzeduration 10000000 -probesize 10000000 -fflags +discardcorrupt+nobuffer -i $URL"
           elif echo "$URL" | grep -qiE '\.(mp4|mkv|avi|mov|webm)($|\?)'; then
             echo "Source: Direct media (looping)"
             INPUT="-stream_loop -1 -re -i $URL"
@@ -553,12 +553,12 @@ jobs:
           # Build tee muxer output string if extra RTMP destinations exist
           if [ -n "$EXTRA_RTMP" ]; then
             # Split comma-separated URLs, build tee string
-            TEE_STR="[f=flv]$OUTPUT_URL"
+            TEE_STR="[f=flv:onfail=ignore]$OUTPUT_URL"
             IFS=',' read -ra EXTRA_URLS <<< "$EXTRA_RTMP"
             for URL in "${EXTRA_URLS[@]}"; do
               URL=$(echo "$URL" | xargs)
               if [ -n "$URL" ]; then
-                TEE_STR="${TEE_STR}|[f=flv]$URL"
+                TEE_STR="${TEE_STR}|[f=flv:onfail=ignore]$URL"
                 echo "Added extra output: $URL"
               fi
             done
@@ -573,6 +573,7 @@ jobs:
             echo "=== Stream attempt $attempt at $(date) ==="
 
             ffmpeg -hide_banner -loglevel warning \
+              -timeout 10000000 \
               $INPUT_ARGS \
               $EXTRA_INPUTS \
               -filter_complex "$FILTER_COMPLEX" \
@@ -584,6 +585,7 @@ jobs:
               -c:a aac -b:a 128k -ar 44100 \
               -flush_packets 1 \
               -max_muxing_queue_size 9999 \
+              -flags +global_header \
               $OUTPUT_ARG \
               "$OUTPUT_VAL"
 
