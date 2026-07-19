@@ -96,7 +96,8 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y -qq --no-install-recommends \
             ffmpeg fonts-dejavu-core curl
-          pip install -q "yt-dlp[default]" curl_cffi pillow
+          pip install -q --upgrade "yt-dlp[default]" curl_cffi pillow
+          yt-dlp --version
 
       - name: Validate font
         run: |
@@ -218,21 +219,17 @@ jobs:
             INPUT="stream_loop:-1:$URL"
           elif echo "$URL" | grep -qiE 'youtube\.com|youtu\.be'; then
             echo "Source: YouTube (with impersonate)"
-            HLS=$(yt-dlp $COOKIES --impersonate chrome -g --socket-timeout 30 "$URL" 2>&1 | tail -1) || true
-            echo "yt-dlp output: $HLS"
+            # Capture stdout only (the HLS URL), errors go to stderr
+            HLS=$(yt-dlp $COOKIES --impersonate chrome -g --socket-timeout 30 "$URL" 2>/tmp/yt_err.txt) || true
+            cat /tmp/yt_err.txt
+            echo "yt-dlp result: $HLS"
             if [ -z "$HLS" ]; then
-              echo "yt-dlp failed, trying curl_cffi fallback..."
-              HLS=$(python3 -c "
-          import curl_cffi.requests as r
-          import json, re
-          resp = r.get('$URL', impersonate='chrome')
-          # try to extract m3u8 from page
-          m3u8s = re.findall(r'(https?://[^\s\"]+\.m3u8[^\s\"]*)', resp.text)
-          if m3u8s:
-              print(m3u8s[-1])
-          " 2>/dev/null) || true
+              echo "yt-dlp failed, trying with --extractor-args..."
+              HLS=$(yt-dlp $COOKIES --impersonate chrome --extractor-args "youtube:player_client=web" -g --socket-timeout 30 "$URL" 2>/tmp/yt_err2.txt) || true
+              cat /tmp/yt_err2.txt
+              echo "yt-dlp retry result: $HLS"
             fi
-            if [ -z "$HLS" ]; then
+            if [ -z "$HLS" ] || echo "$HLS" | grep -qi "ERROR"; then
               echo "ERROR: Could not resolve YouTube URL"
               exit 1
             fi
@@ -240,13 +237,14 @@ jobs:
             INPUT="$HLS"
           else
             echo "Source: Generic URL (trying yt-dlp with impersonate)"
-            HLS=$(yt-dlp $COOKIES --impersonate chrome -g --socket-timeout 30 "$URL" 2>&1 | tail -1) || true
-            echo "yt-dlp output: $HLS"
-            if [ -n "$HLS" ]; then
+            HLS=$(yt-dlp $COOKIES --impersonate chrome -g --socket-timeout 30 "$URL" 2>/tmp/yt_err.txt) || true
+            cat /tmp/yt_err.txt
+            echo "yt-dlp result: $HLS"
+            if [ -n "$HLS" ] && ! echo "$HLS" | grep -qi "ERROR"; then
               INPUT="$HLS"
             else
               echo "Falling back to direct URL"
-              INPUT="stream_loop:-1:$URL"
+              INPUT="stream_loop -1 -re -i $URL"
             fi
           fi
 
@@ -276,10 +274,15 @@ jobs:
 
           # Build input args
           INPUT_ARGS=""
-          IFS=':' read -r PROTO INPUT_PATH <<< "$INPUT"
-          if [ "$PROTO" = "stream_loop" ]; then
-            INPUT_ARGS="-stream_loop -1 -re -i $INPUT_PATH"
+          if echo "$INPUT" | grep -q "^stream_loop "; then
+            # Format: "stream_loop -1 -re -i URL"
+            INPUT_ARGS="$INPUT"
+          elif echo "$INPUT" | grep -q "^stream_loop:-1:"; then
+            # Legacy format: "stream_loop:-1:URL"
+            URL_PATH=$(echo "$INPUT" | sed 's/^stream_loop:-1://')
+            INPUT_ARGS="-stream_loop -1 -re -i $URL_PATH"
           else
+            # Direct URL
             INPUT_ARGS="-re -i $INPUT"
           fi
 
