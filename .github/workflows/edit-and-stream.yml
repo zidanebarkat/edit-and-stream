@@ -442,9 +442,10 @@ jobs:
             CURRENT="scaled"
             INPUT_IDX=1
 
-            # Overlay reaction image (bottom-right)
+            # Overlay reaction image (bottom-right, scaled to 25%)
             if [ -n "$HAS_REACTION" ] && [ -f "$HAS_REACTION" ]; then
-              VF="${VF}[${CURRENT}][${INPUT_IDX}:v]overlay=W-w-20:H-h-20[reacted];"
+              VF="${VF}[${INPUT_IDX}:v]scale=iw*0.25:ih*0.25[reaction_sm];"
+              VF="${VF}[${CURRENT}][reaction_sm]overlay=W-w-20:H-h-20[reacted];"
               CURRENT="reacted"
               INPUT_IDX=$((INPUT_IDX + 1))
             fi
@@ -471,9 +472,10 @@ jobs:
             CURRENT="cycled"
             INPUT_IDX=1
 
-            # Overlay reaction image (bottom-right)
+            # Overlay reaction image (bottom-right, scaled to 25%)
             if [ -n "$HAS_REACTION" ] && [ -f "$HAS_REACTION" ]; then
-              VF="${VF}[${CURRENT}][${INPUT_IDX}:v]overlay=W-w-20:H-h-20[reacted];"
+              VF="${VF}[${INPUT_IDX}:v]scale=iw*0.25:ih*0.25[reaction_sm];"
+              VF="${VF}[${CURRENT}][reaction_sm]overlay=W-w-20:H-h-20[reacted];"
               CURRENT="reacted"
               INPUT_IDX=$((INPUT_IDX + 1))
             fi
