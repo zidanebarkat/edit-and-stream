@@ -450,10 +450,10 @@ jobs:
               INPUT_IDX=$((INPUT_IDX + 1))
             fi
 
-            # Overlay frame image — crop to visible content, stretch to fill 1920x1080
+            # Overlay frame image — crop to visible content, stretch to fill 1920x1080, preserve alpha
             if [ -n "$HAS_FRAME" ] && [ -f "$HAS_FRAME" ]; then
-              VF="${VF}[${INPUT_IDX}:v]crop=328:220:16:56,scale=1920:1080:force_original_aspect_ratio=disable[frame_sm];"
-              VF="${VF}[${CURRENT}][frame_sm]overlay=0:0[framed];"
+              VF="${VF}[${INPUT_IDX}:v]crop=328:220:16:56,format=rgba,scale=1920:1080:force_original_aspect_ratio=disable[frame_sm];"
+              VF="${VF}[${CURRENT}][frame_sm]overlay=0:0:format=auto[framed];"
               CURRENT="framed"
               INPUT_IDX=$((INPUT_IDX + 1))
             fi
@@ -482,10 +482,10 @@ jobs:
               INPUT_IDX=$((INPUT_IDX + 1))
             fi
 
-            # Overlay frame image — crop to visible content, stretch to fill 1920x1080
+            # Overlay frame image — crop to visible content, stretch to fill 1920x1080, preserve alpha
             if [ -n "$HAS_FRAME" ] && [ -f "$HAS_FRAME" ]; then
-              VF="${VF}[${INPUT_IDX}:v]crop=328:220:16:56,scale=1920:1080:force_original_aspect_ratio=disable[frame_sm];"
-              VF="${VF}[${CURRENT}][frame_sm]overlay=0:0[framed];"
+              VF="${VF}[${INPUT_IDX}:v]crop=328:220:16:56,format=rgba,scale=1920:1080:force_original_aspect_ratio=disable[frame_sm];"
+              VF="${VF}[${CURRENT}][frame_sm]overlay=0:0:format=auto[framed];"
               CURRENT="framed"
               INPUT_IDX=$((INPUT_IDX + 1))
             fi
