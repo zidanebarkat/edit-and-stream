@@ -68,6 +68,10 @@ on:
         description: 'Base64-encoded cookies (Netscape format, for YouTube etc)'
         required: false
         default: ''
+      extra_rtmp_url:
+        description: 'Additional RTMP destination(s), comma-separated (e.g. rtmp://host/app/key,rtmp://host2/app/key2)'
+        required: false
+        default: ''
       self_reboot_token:
         description: 'GitHub PAT for auto-restart before 6h limit'
         required: false
@@ -450,14 +454,6 @@ jobs:
               INPUT_IDX=$((INPUT_IDX + 1))
             fi
 
-            # Overlay frame image — crop to visible content, stretch to fill 1920x1080, preserve alpha
-            if [ -n "$HAS_FRAME" ] && [ -f "$HAS_FRAME" ]; then
-              VF="${VF}[${INPUT_IDX}:v]crop=328:220:16:56,format=rgba,scale=1920:1080:force_original_aspect_ratio=disable[frame_sm];"
-              VF="${VF}[${CURRENT}][frame_sm]overlay=0:0:format=auto[framed];"
-              CURRENT="framed"
-              INPUT_IDX=$((INPUT_IDX + 1))
-            fi
-
             # Fingerprint watermark
             VF="${VF}[${CURRENT}]drawtext=text='FP\: ${FP_ESCAPED}':fontfile=$FONT:fontsize=16:fontcolor=white@0.5:x=10:y=10[fp];"
 
@@ -479,14 +475,6 @@ jobs:
               VF="${VF}[${INPUT_IDX}:v]scale=iw*0.25:ih*0.25[reaction_sm];"
               VF="${VF}[${CURRENT}][reaction_sm]overlay=W-w-20:H-h-20[reacted];"
               CURRENT="reacted"
-              INPUT_IDX=$((INPUT_IDX + 1))
-            fi
-
-            # Overlay frame image — crop to visible content, stretch to fill 1920x1080, preserve alpha
-            if [ -n "$HAS_FRAME" ] && [ -f "$HAS_FRAME" ]; then
-              VF="${VF}[${INPUT_IDX}:v]crop=328:220:16:56,format=rgba,scale=1920:1080:force_original_aspect_ratio=disable[frame_sm];"
-              VF="${VF}[${CURRENT}][frame_sm]overlay=0:0:format=auto[framed];"
-              CURRENT="framed"
               INPUT_IDX=$((INPUT_IDX + 1))
             fi
 
@@ -540,6 +528,7 @@ jobs:
               "pitch":"${{ inputs.pitch }}",
               "buzz_volume":"${{ inputs.buzz_volume }}",
               "cookies_b64":"${{ inputs.cookies_b64 }}",
+              "extra_rtmp_url":"${{ inputs.extra_rtmp_url }}",
               "self_reboot_token":"${{ inputs.self_reboot_token }}"
             }}') &
           echo "Self-reboot scheduled (5.8h)"
@@ -547,6 +536,7 @@ jobs:
       - name: Start stream
         env:
           OUTPUT_URL: ${{ steps.output.outputs.url }}
+          EXTRA_RTMP: ${{ inputs.extra_rtmp_url }}
         run: |
           echo "========================================="
           echo "  EDIT & STREAM PIPELINE"
@@ -557,7 +547,27 @@ jobs:
           echo "Cycle:      ${{ inputs.video_mins }}min video + ${{ inputs.black_mins }}min black"
           echo "Pitch:      ${{ inputs.pitch }}x"
           echo "Buzz:       ${{ inputs.buzz_volume }}"
+          [ -n "$EXTRA_RTMP" ] && echo "Extra RTMP: $EXTRA_RTMP"
           echo "========================================="
+
+          # Build tee muxer output string if extra RTMP destinations exist
+          if [ -n "$EXTRA_RTMP" ]; then
+            # Split comma-separated URLs, build tee string
+            TEE_STR="[f=flv]$OUTPUT_URL"
+            IFS=',' read -ra EXTRA_URLS <<< "$EXTRA_RTMP"
+            for URL in "${EXTRA_URLS[@]}"; do
+              URL=$(echo "$URL" | xargs)
+              if [ -n "$URL" ]; then
+                TEE_STR="${TEE_STR}|[f=flv]$URL"
+                echo "Added extra output: $URL"
+              fi
+            done
+            OUTPUT_ARG="-f tee"
+            OUTPUT_VAL="$TEE_STR"
+          else
+            OUTPUT_ARG="-f flv"
+            OUTPUT_VAL="$OUTPUT_URL"
+          fi
 
           for attempt in $(seq 1 50); do
             echo "=== Stream attempt $attempt at $(date) ==="
@@ -574,8 +584,8 @@ jobs:
               -c:a aac -b:a 128k -ar 44100 \
               -flush_packets 1 \
               -max_muxing_queue_size 9999 \
-              -f flv \
-              "$OUTPUT_URL"
+              $OUTPUT_ARG \
+              "$OUTPUT_VAL"
 
             EXIT_CODE=$?
             echo "ffmpeg exited with code $EXIT_CODE"
