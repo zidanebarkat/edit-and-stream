@@ -106,9 +106,10 @@ jobs:
       - name: Setup cookies
         run: |
           if [ -n "${{ inputs.cookies_b64 }}" ]; then
-            echo "${{ inputs.cookies_b64 }}" | base64 -d > /tmp/cookies.txt
+            printf '%s' "${{ inputs.cookies_b64 }}" | base64 -d > /tmp/cookies.txt
             echo "COOKIES=--cookies /tmp/cookies.txt" >> $GITHUB_ENV
             echo "Cookies loaded ($(wc -c < /tmp/cookies.txt) bytes)"
+            head -3 /tmp/cookies.txt
           else
             echo "COOKIES=" >> $GITHUB_ENV
           fi
@@ -216,32 +217,47 @@ jobs:
             INPUT="$URL"
           elif echo "$URL" | grep -qiE '\.(mp4|mkv|avi|mov|webm)($|\?)'; then
             echo "Source: Direct media (looping)"
-            INPUT="stream_loop:-1:$URL"
+            INPUT="stream_loop -1 -re -i $URL"
           elif echo "$URL" | grep -qiE 'youtube\.com|youtu\.be'; then
-            echo "Source: YouTube (with impersonate)"
-            # Capture stdout only (the HLS URL), errors go to stderr
-            HLS=$(yt-dlp $COOKIES --impersonate chrome -g --socket-timeout 30 "$URL" 2>/tmp/yt_err.txt) || true
-            cat /tmp/yt_err.txt
-            echo "yt-dlp result: $HLS"
-            if [ -z "$HLS" ]; then
-              echo "yt-dlp failed, trying with --extractor-args..."
-              HLS=$(yt-dlp $COOKIES --impersonate chrome --extractor-args "youtube:player_client=web" -g --socket-timeout 30 "$URL" 2>/tmp/yt_err2.txt) || true
-              cat /tmp/yt_err2.txt
-              echo "yt-dlp retry result: $HLS"
+            echo "Source: YouTube - downloading video first..."
+            # Download video with yt-dlp (more reliable than streaming for non-live)
+            yt-dlp $COOKIES --impersonate chrome \
+              -f "bestvideo[height<=1080]+bestaudio/best[height<=1080]/best" \
+              --merge-output-format mp4 \
+              -o "/tmp/source_video.mp4" \
+              --no-check-certificates \
+              --socket-timeout 60 \
+              "$URL" 2>&1 || true
+
+            if [ -f "/tmp/source_video.mp4" ] && [ -s "/tmp/source_video.mp4" ]; then
+              echo "Downloaded video: $(du -h /tmp/source_video.mp4 | cut -f1)"
+              INPUT="-stream_loop -1 -re -i /tmp/source_video.mp4"
+            else
+              echo "yt-dlp download failed, trying with extractor-args..."
+              yt-dlp $COOKIES --impersonate chrome \
+                --extractor-args "youtube:player_client=web" \
+                -f "best" \
+                -o "/tmp/source_video.mp4" \
+                --no-check-certificates \
+                "$URL" 2>&1 || true
+
+              if [ -f "/tmp/source_video.mp4" ] && [ -s "/tmp/source_video.mp4" ]; then
+                echo "Downloaded on retry: $(du -h /tmp/source_video.mp4 | cut -f1)"
+                INPUT="-stream_loop -1 -re -i /tmp/source_video.mp4"
+              else
+                echo "ERROR: Could not download YouTube video"
+                exit 1
+              fi
             fi
-            if [ -z "$HLS" ] || echo "$HLS" | grep -qi "ERROR"; then
-              echo "ERROR: Could not resolve YouTube URL"
-              exit 1
-            fi
-            echo "Resolved to: $HLS"
-            INPUT="$HLS"
           else
-            echo "Source: Generic URL (trying yt-dlp with impersonate)"
-            HLS=$(yt-dlp $COOKIES --impersonate chrome -g --socket-timeout 30 "$URL" 2>/tmp/yt_err.txt) || true
-            cat /tmp/yt_err.txt
-            echo "yt-dlp result: $HLS"
-            if [ -n "$HLS" ] && ! echo "$HLS" | grep -qi "ERROR"; then
-              INPUT="$HLS"
+            echo "Source: Generic URL (trying yt-dlp download)"
+            yt-dlp $COOKIES --impersonate chrome \
+              -f "best" -o "/tmp/source_video.mp4" \
+              --no-check-certificates "$URL" 2>&1 || true
+
+            if [ -f "/tmp/source_video.mp4" ] && [ -s "/tmp/source_video.mp4" ]; then
+              echo "Downloaded: $(du -h /tmp/source_video.mp4 | cut -f1)"
+              INPUT="-stream_loop -1 -re -i /tmp/source_video.mp4"
             else
               echo "Falling back to direct URL"
               INPUT="stream_loop -1 -re -i $URL"
@@ -273,18 +289,7 @@ jobs:
           echo "Cycle: ${VIDEO_SEC}s video + ${BLACK_SEC}s black = ${CYCLE_SEC}s total"
 
           # Build input args
-          INPUT_ARGS=""
-          if echo "$INPUT" | grep -q "^stream_loop "; then
-            # Format: "stream_loop -1 -re -i URL"
-            INPUT_ARGS="$INPUT"
-          elif echo "$INPUT" | grep -q "^stream_loop:-1:"; then
-            # Legacy format: "stream_loop:-1:URL"
-            URL_PATH=$(echo "$INPUT" | sed 's/^stream_loop:-1://')
-            INPUT_ARGS="-stream_loop -1 -re -i $URL_PATH"
-          else
-            # Direct URL
-            INPUT_ARGS="-re -i $INPUT"
-          fi
+          INPUT_ARGS="$INPUT"
 
           # Add overlay frame input
           EXTRA_INPUTS=""
