@@ -376,15 +376,72 @@ jobs:
               exit 1
             fi
           else
-            echo "Source: Generic URL (trying yt-dlp)"
-            yt-dlp $COOKIES --impersonate chrome \
-              -f "best" -o "/tmp/source_video.mp4" \
-              --no-check-certificates "$URL" 2>&1 || true
+            echo "Source: Generic URL"
 
-            if [ -f "/tmp/source_video.mp4" ] && [ -s "/tmp/source_video.mp4" ]; then
-              echo "Downloaded: $(du -h /tmp/source_video.mp4 | cut -f1)"
-              INPUT="-stream_loop -1 -re -i /tmp/source_video.mp4"
-            else
+            # Method 1: Try kora-api (go4score.lc, hesgoalo.com, etc.)
+            HLS_RESOLVED="false"
+            if echo "$URL" | grep -qiE 'go4score|hesgoalo|kora-plus|smartagro|goalz\.zip|stream'; then
+              echo "--- Method: Kora API resolver ---"
+              MATCH_ID=$(echo "$URL" | grep -oP '[?&]m=\K[0-9]+' | head -1)
+              LANG=$(echo "$URL" | grep -oP '[?&]lang=\K[a-z]+' | head -1)
+              [ -z "$LANG" ] && LANG="en"
+              if [ -n "$MATCH_ID" ]; then
+                echo "Match ID: $MATCH_ID, Lang: $LANG"
+                for API in "https://ws.kora-api.top" "https://ws.kora-api.space"; do
+                  echo "Trying API: $API"
+                  CHANNELS=$(curl -fsSL --max-time 15 "$API/api/matche/$MATCH_ID/$LANG" 2>/dev/null) || true
+                  if echo "$CHANNELS" | python3 -c "import sys,json; d=json.load(sys.stdin); assert len(d.get('channels',[]))>0" 2>/dev/null; then
+                    echo "$CHANNELS" | python3 -c "
+          import sys, json, base64, re, urllib.request
+          data = json.load(sys.stdin)
+          channels = data.get('channels', [])
+          print(f'Found {len(channels)} channels')
+          # Try albaplayer mobile_links first (direct HLS)
+          for ch in channels:
+              ml = ch.get('mobile_link', '')
+              if ml and 'albaplayer' in ml:
+                  try:
+                      req = urllib.request.Request(ml, headers={'User-Agent': 'Mozilla/5.0'})
+                      resp = urllib.request.urlopen(req, timeout=10)
+                      html = resp.read().decode('utf-8', errors='replace')
+                      m = re.search(r\"AlbaPlayerControl\('([^']+)'\", html)
+                      if m:
+                          raw = base64.b64decode(m.group(1) + '==').decode()
+                          if 'm3u8' in raw or 'hls' in raw:
+                              print(f'HLS:{raw}')
+                              sys.exit(0)
+                  except Exception as e:
+                      print(f'  Failed {ml}: {e}', file=sys.stderr)
+          print('NO_HLS')
+          " 2>/dev/null > /tmp/kora_hls.txt || true
+                    if grep -q "^HLS:" /tmp/kora_hls.txt 2>/dev/null; then
+                      HLS_URL=$(grep "^HLS:" /tmp/kora_hls.txt | head -1 | sed 's/^HLS://')
+                      echo "Resolved HLS: $HLS_URL"
+                      INPUT="-re -analyzeduration 10000000 -probesize 10000000 -fflags +discardcorrupt+nobuffer -i $HLS_URL"
+                      HLS_RESOLVED="true"
+                      break
+                    fi
+                  fi
+                done
+              fi
+            fi
+
+            # Method 2: yt-dlp
+            if [ "$HLS_RESOLVED" = "false" ]; then
+              echo "--- Method: yt-dlp ---"
+              yt-dlp $COOKIES --impersonate chrome \
+                -f "best" -o "/tmp/source_video.mp4" \
+                --no-check-certificates "$URL" 2>&1 || true
+
+              if [ -f "/tmp/source_video.mp4" ] && [ -s "/tmp/source_video.mp4" ]; then
+                echo "Downloaded: $(du -h /tmp/source_video.mp4 | cut -f1)"
+                INPUT="-stream_loop -1 -re -i /tmp/source_video.mp4"
+                HLS_RESOLVED="true"
+              fi
+            fi
+
+            # Method 3: Fallback to direct URL
+            if [ "$HLS_RESOLVED" = "false" ]; then
               echo "Falling back to direct URL"
               INPUT="-stream_loop -1 -re -i $URL"
             fi
