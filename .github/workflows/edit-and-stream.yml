@@ -450,9 +450,9 @@ jobs:
               INPUT_IDX=$((INPUT_IDX + 1))
             fi
 
-            # Overlay frame image — stretch to fill entire 1920x1080
+            # Overlay frame image — crop transparent padding, stretch to fill 1920x1080
             if [ -n "$HAS_FRAME" ] && [ -f "$HAS_FRAME" ]; then
-              VF="${VF}[${INPUT_IDX}:v]scale=1920:1080:force_original_aspect_ratio=disable[frame_sm];"
+              VF="${VF}[${INPUT_IDX}:v]crop=340:216:10:58,scale=1920:1080:force_original_aspect_ratio=disable[frame_sm];"
               VF="${VF}[${CURRENT}][frame_sm]overlay=0:0[framed];"
               CURRENT="framed"
               INPUT_IDX=$((INPUT_IDX + 1))
@@ -482,9 +482,9 @@ jobs:
               INPUT_IDX=$((INPUT_IDX + 1))
             fi
 
-            # Overlay frame image — stretch to fill entire 1920x1080
+            # Overlay frame image — crop transparent padding, stretch to fill 1920x1080
             if [ -n "$HAS_FRAME" ] && [ -f "$HAS_FRAME" ]; then
-              VF="${VF}[${INPUT_IDX}:v]scale=1920:1080:force_original_aspect_ratio=disable[frame_sm];"
+              VF="${VF}[${INPUT_IDX}:v]crop=340:216:10:58,scale=1920:1080:force_original_aspect_ratio=disable[frame_sm];"
               VF="${VF}[${CURRENT}][frame_sm]overlay=0:0[framed];"
               CURRENT="framed"
               INPUT_IDX=$((INPUT_IDX + 1))
