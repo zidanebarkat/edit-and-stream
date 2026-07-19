@@ -279,26 +279,76 @@ jobs:
               fi
             fi
 
-            # Method 4: cobalt.tools API
+            # Method 4: Invidious API (public instances)
             if [ "$DOWNLOADED" = "false" ]; then
-              echo "--- Method 4: cobalt.tools API ---"
+              echo "--- Method 4: Invidious API ---"
               rm -f /tmp/source_video.mp4
-              COBALT_URL=$(python3 -c "
+              VIDEO_ID=$(echo "$URL" | grep -oP '(?:v=|youtu\.be/)([a-zA-Z0-9_-]{11})' | tail -1 | sed 's/[?&]v=//;s/.*\///')
+              echo "Video ID: $VIDEO_ID"
+              for INSTANCE in "https://inv.nadeko.net" "https://invidious.nerdvpn.de" "https://vid.puffyan.us" "https://invidious.privacyredirect.com"; do
+                echo "Trying $INSTANCE..."
+                STREAM_URL=$(python3 -c "
           import json, urllib.request
-          data = json.dumps({'url': '$URL', 'vCodec': 'h264', 'vQuality': '1080', 'filenamePattern': 'basic'}).encode()
-          req = urllib.request.Request('https://api.cobalt.tools/api/json', data=data,
-              headers={'Content-Type': 'application/json', 'Accept': 'application/json'})
-          resp = urllib.request.urlopen(req, timeout=60)
-          print(json.loads(resp.read().decode()).get('url', ''))
+          req = urllib.request.Request('$INSTANCE/api/v1/videos/$VIDEO_ID', headers={'User-Agent': 'Mozilla/5.0'})
+          resp = urllib.request.urlopen(req, timeout=30)
+          data = json.loads(resp.read().decode())
+          fmts = data.get('formatStreams', []) + data.get('adaptiveFormats', [])
+          best = None
+          for f in fmts:
+              if f.get('type','').startswith('video/mp4') and '720p' in f.get('qualityLabel',''):
+                  best = f.get('url','')
+                  break
+          if not best:
+              for f in fmts:
+                  if f.get('type','').startswith('video/mp4'):
+                      best = f.get('url','')
+                      break
+          print(best or '')
           " 2>/dev/null) || true
-              if [ -n "$COBALT_URL" ] && [ "$COBALT_URL" != "None" ]; then
-                echo "Cobalt URL obtained, downloading..."
-                curl -fsSL --max-time 300 -o /tmp/source_video.mp4 "$COBALT_URL" 2>&1 || true
-                if [ -f "/tmp/source_video.mp4" ] && [ -s "/tmp/source_video.mp4" ]; then
-                  DOWNLOADED="true"
-                  echo "OK: $(du -h /tmp/source_video.mp4 | cut -f1)"
+                if [ -n "$STREAM_URL" ]; then
+                  echo "Got stream URL from $INSTANCE, downloading..."
+                  curl -fsSL --max-time 300 -o /tmp/source_video.mp4 "$STREAM_URL" 2>&1 || true
+                  if [ -f "/tmp/source_video.mp4" ] && [ -s "/tmp/source_video.mp4" ]; then
+                    DOWNLOADED="true"
+                    echo "OK from invidious: $(du -h /tmp/source_video.mp4 | cut -f1)"
+                    break
+                  fi
                 fi
-              fi
+              done
+            fi
+
+            # Method 5: Piped API
+            if [ "$DOWNLOADED" = "false" ]; then
+              echo "--- Method 5: Piped API ---"
+              rm -f /tmp/source_video.mp4
+              VIDEO_ID=$(echo "$URL" | grep -oP '(?:v=|youtu\.be/)([a-zA-Z0-9_-]{11})' | tail -1 | sed 's/[?&]v=//;s/.*\///')
+              for INSTANCE in "https://pipedapi.kavin.rocks" "https://piped-api.privacy.com.de" "https://watchapi.whatever.social"; do
+                echo "Trying $INSTANCE..."
+                STREAM_URL=$(python3 -c "
+          import json, urllib.request
+          req = urllib.request.Request('$INSTANCE/streams/$VIDEO_ID', headers={'User-Agent': 'Mozilla/5.0'})
+          resp = urllib.request.urlopen(req, timeout=30)
+          data = json.loads(resp.read().decode())
+          for s in data.get('videoStreams', []):
+              if s.get('mimeType','').startswith('video/mp4') and s.get('videoOnly') == False:
+                  print(s.get('url',''))
+                  break
+          else:
+              for s in data.get('videoStreams', []):
+                  if s.get('mimeType','').startswith('video/mp4'):
+                      print(s.get('url',''))
+                      break
+          " 2>/dev/null) || true
+                if [ -n "$STREAM_URL" ]; then
+                  echo "Got stream URL from $INSTANCE, downloading..."
+                  curl -fsSL --max-time 300 -o /tmp/source_video.mp4 "$STREAM_URL" 2>&1 || true
+                  if [ -f "/tmp/source_video.mp4" ] && [ -s "/tmp/source_video.mp4" ]; then
+                    DOWNLOADED="true"
+                    echo "OK from piped: $(du -h /tmp/source_video.mp4 | cut -f1)"
+                    break
+                  fi
+                fi
+              done
             fi
 
             if [ "$DOWNLOADED" = "true" ]; then
